@@ -29,5 +29,6 @@
     ],
     "vscode-kdb-q.consoleViewEnabled": true,
     "vscode-kdb-q.gridViewEnabled": true,
-    "vscode-kdb-q.documentViewEnabled": true
+    "vscode-kdb-q.documentViewEnabled": true,
+    "python.terminal.useEnvFile": true
 }
