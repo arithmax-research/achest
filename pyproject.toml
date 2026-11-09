@@ -54,3 +54,7 @@ all = [
 
 [tool.setuptools.packages.find]
 include = ["achest*"]
+# Only ship real importable packages.  Without this, the ``achest-kdb-q``
+# directory (q/kdb+ scripts, no ``__init__.py``) matches the ``achest*`` glob
+# as a namespace package and gets installed as a stray top-level folder.
+namespaces = false
