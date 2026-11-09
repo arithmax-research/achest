@@ -5,7 +5,8 @@ updating.md
 **/__pycache__/**
 /arithmaxchest.egg-info
 /.pytest_cache
-/tests
+/tests/*
+!/tests/test_lean_zip_format.py
 /dist
 /Custom_Downloads
 ***.env***

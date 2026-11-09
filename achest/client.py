@@ -92,12 +92,15 @@ def _read_lean_zip(zip_bytes: bytes) -> pd.DataFrame:
     """Parse a Lean-format zip-of-zips back into a pandas DataFrame.
 
     The server returns an outer zip containing individual per-symbol zips
-    (e.g. ``spy.zip``).  Each inner zip holds a single merged CSV
-    with columns ``Time,Open,High,Low,Close,Volume``.
+    (e.g. ``spy.zip``).  Each inner zip holds a single merged CSV with the
+    positional columns ``Time,Open,High,Low,Close,Volume``.  The CSV is
+    headerless (LEAN requirement), so the columns are assigned by position;
+    legacy archives that still start with a header row are tolerated.
 
     Returns a DataFrame with the same lowercase column schema as the
     JSON / CSV formats: ``timestamp, symbol, open, high, low, close, volume``.
     """
+    _lean_columns = ["Time", "Open", "High", "Low", "Close", "Volume"]
     frames = []
     with zipfile.ZipFile(BytesIO(zip_bytes)) as outer_zf:
         for inner_name in outer_zf.namelist():
@@ -112,7 +115,17 @@ def _read_lean_zip(zip_bytes: bytes) -> pd.DataFrame:
                     tokens = csv_name.replace(".csv", "").split("_")
                     symbol_from_path = tokens[0].upper() if tokens else "UNKNOWN"
 
-                    df = pd.read_csv(inner_zf.open(csv_name))
+                    # Read positionally — Lean archives carry no header row.
+                    df = pd.read_csv(inner_zf.open(csv_name), header=None)
+                    if df.empty:
+                        continue
+                    # Tolerate legacy archives whose first line is a header.
+                    if not str(df.iloc[0, 0]).strip()[:1].isdigit():
+                        df = df.iloc[1:].reset_index(drop=True)
+                    df = df.iloc[:, : len(_lean_columns)]
+                    df.columns = _lean_columns
+                    for col in _lean_columns[1:]:
+                        df[col] = pd.to_numeric(df[col], errors="coerce")
                     df["symbol"] = symbol_from_path
                     # Parse the Lean time column
                     raw = df["Time"].astype(str)

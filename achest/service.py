@@ -611,6 +611,11 @@ def to_lean_zip(frame: pd.DataFrame, resolution: str) -> dict[str, bytes]:
     (``00:00``) to match the reference files under ``Data/``.  If the
     DataFrame contains quote columns in the future, a separate ``quote``
     zip can be generated.
+
+    The CSV inside the zip carries **no header row**: LEAN requires the very
+    first line of a data file to be a data row, so a ``Time,Open,...`` header
+    makes every bar unreadable (100% failed data requests).  Each row is
+    newline-terminated, matching the reference archives under ``Data/``.
     """
     from io import BytesIO
     import zipfile
@@ -627,7 +632,9 @@ def to_lean_zip(frame: pd.DataFrame, resolution: str) -> dict[str, bytes]:
         multiplier = _LEAN_PRICE_MULTIPLIER if asset_type in ("equity", "index", "futures") else 1
 
         group_sorted = group.sort_index()
-        lines = ["Time,Open,High,Low,Close,Volume"]
+        # LEAN data files must NOT contain a header row — the first line has to
+        # be a valid data row.  Build data rows only.
+        lines: list[str] = []
 
         for ts, row in group_sorted.iterrows():
             ts_dt = ts.to_pydatetime()
@@ -669,9 +676,14 @@ def to_lean_zip(frame: pd.DataFrame, resolution: str) -> dict[str, bytes]:
         csv_name = f"{clean_sym}_{resolution}_trade.csv"
         zip_name = f"{clean_sym}.zip"
 
+        # Every row (including the last) is newline-terminated, headerless.
+        csv_text = "\n".join(lines)
+        if csv_text:
+            csv_text += "\n"
+
         buf = BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            zf.writestr(csv_name, "\n".join(lines))
+            zf.writestr(csv_name, csv_text)
         result[zip_name] = buf.getvalue()
 
     return result

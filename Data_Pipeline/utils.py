@@ -350,11 +350,16 @@ def convert_to_lean_format(df: pd.DataFrame, symbol: str, asset_type: str) -> Li
     return lean_data
 
 def create_zip_file(lean_data: List[List], zip_path: str, symbol: str):
-    """Create a zip file containing Lean format CSV data"""
+    """Create a zip file containing Lean format CSV data.
+
+    LEAN data files must not contain a header row — the first line of the CSV
+    has to be a data row, otherwise LEAN fails to parse every bar.  Rows are
+    therefore written verbatim, each one newline-terminated.
+    """
     ensure_directory_exists(os.path.dirname(zip_path))
     
-    # Create CSV content
-    csv_content = "Time,Open,High,Low,Close,Volume\n"
+    # Create CSV content (headerless)
+    csv_content = ""
     for row in lean_data:
         csv_content += ",".join(str(item) for item in row) + "\n"
     

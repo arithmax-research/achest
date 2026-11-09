@@ -143,7 +143,7 @@ with MarketDataClient() as client:
   )
 ```
 
-When `output` is omitted, Lean files are placed under `Data/{asset}/{resolution}/`; non-Lean files use `Custom_Downloads/{symbol}_{resolution}.{extension}`. Lean output contains one zip archive per symbol and is compatible with [QuantConnect Lean](https://github.com/QuantConnect/Lean).
+When `output` is omitted, Lean files are placed under `Data/{asset}/{resolution}/`; non-Lean files use `Custom_Downloads/{symbol}_{resolution}.{extension}`. Lean output contains one headerless zip archive per symbol (e.g. `spy.zip` → `spy_daily_trade.csv`) and is compatible with [QuantConnect Lean](https://github.com/QuantConnect/Lean). Lean data files must not contain a `Time,Open,High,Low,Close,Volume` header row — the first line is always a data row, otherwise Lean rejects every bar.
 
 For compact text suitable for an LLM or research prompt, use `q_table()`:
 
