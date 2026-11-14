@@ -75,13 +75,17 @@ def _sb(byte):
 
 
 def _dq(endian, data, off):
-    """Decode one q IPC value from ``data`` at ``off``; returns (value, next_off)."""
+    """Decode one q IPC value from ``data`` at ``off``; returns (value, next_off).
+
+    q serialization: lists/vectors carry a `type` byte, an `attributes` byte and
+    a 4-byte length; atoms carry just a `type` byte followed by their data.
+    """
     if off >= len(data):
         return None, off
     t = _sb(data[off])
     if t == 0:               # general list
-        cnt = struct.unpack(endian + "i", data[off+1:off+5])[0]
-        off += 5
+        cnt = struct.unpack(endian + "i", data[off+2:off+6])[0]
+        off += 6
         items = []
         for _ in range(cnt):
             v, off = _dq(endian, data, off)
@@ -91,8 +95,8 @@ def _dq(endian, data, off):
         end = data.index(b"\x00", off + 1)
         return data[off+1:end].decode("utf-8", errors="replace"), end + 1
     if t == 11:              # symbol list (null-terminated entries)
-        cnt = struct.unpack(endian + "i", data[off+1:off+5])[0]
-        off += 5
+        cnt = struct.unpack(endian + "i", data[off+2:off+6])[0]
+        off += 6
         syms = []
         for _ in range(cnt):
             end = data.index(b"\x00", off)
@@ -100,15 +104,17 @@ def _dq(endian, data, off):
             off = end + 1
         return syms, off
     if t == 10:              # char vector (q string)
-        n = struct.unpack(endian + "i", data[off+1:off+5])[0]
-        return data[off+5:off+5+n].decode("utf-8", errors="replace"), off+5+n
+        n = struct.unpack(endian + "i", data[off+2:off+6])[0]
+        return data[off+6:off+6+n].decode("utf-8", errors="replace"), off+6+n
     if t == -14:             # date (days since 2000.01.01)
         return struct.unpack(endian + "i", data[off+1:off+5])[0], off+5
     if t == -6:              # 32-bit int
         return struct.unpack(endian + "i", data[off+1:off+5])[0], off+5
     if t == -7:              # 64-bit long
         return struct.unpack(endian + "q", data[off+1:off+9])[0], off+9
-    if t == -8:              # 64-bit float
+    if t == -8:              # 32-bit real
+        return struct.unpack(endian + "f", data[off+1:off+5])[0], off+5
+    if t == -9:              # 64-bit float (double)
         return struct.unpack(endian + "d", data[off+1:off+9])[0], off+9
     return None, off + 1
 
@@ -120,9 +126,9 @@ def _days_to_iso(days, default):
 
 
 def _q_string(endian, s):
-    """Serialize a Python string as a q char vector (type 10)."""
+    """Serialize a Python string as a q char vector (type 10, attributes 0)."""
     raw = s.encode("utf-8")
-    return bytes([10]) + struct.pack(endian + "i", len(raw)) + raw
+    return bytes([10, 0]) + struct.pack(endian + "i", len(raw)) + raw
 
 
 def handle_ipc(conn):

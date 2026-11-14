@@ -26,15 +26,16 @@ def daemon():
 
 
 def q_sym(s):
-    return bytes([0xF5]) + s.encode() + b"\x00"  # -11 symbol atom
+    return bytes([0xF5]) + s.encode() + b"\x00"  # -11 symbol atom (no attributes byte)
 
 
 def q_date(d):
-    return bytes([0xF2]) + struct.pack("<i", (d - date(2000, 1, 1)).days)  # -14 date
+    return bytes([0xF2]) + struct.pack("<i", (d - date(2000, 1, 1)).days)  # -14 date atom
 
 
 def q_general(items):
-    return bytes([0x00]) + struct.pack("<i", len(items)) + b"".join(items)
+    # general list: type byte (0) + attributes byte (0) + 4-byte count
+    return bytes([0x00, 0x00]) + struct.pack("<i", len(items)) + b"".join(items)
 
 
 def q_message(payload, e=1, mtype=1):
@@ -83,7 +84,7 @@ def test_dq_parses_fetch_list(daemon):
 def test_dq_parses_symbol_list(daemon):
     payload = q_general([
         q_sym("fetch"),
-        bytes([0x0B]) + struct.pack("<i", 2) + q_sym("AAPL")[1:] + q_sym("MSFT")[1:],
+        bytes([0x0B, 0x00]) + struct.pack("<i", 2) + q_sym("AAPL")[1:] + q_sym("MSFT")[1:],
         q_date(date(2026, 1, 1)),
         q_date(date(2026, 1, 2)),
         q_sym("daily"),
