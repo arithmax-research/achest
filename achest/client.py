@@ -346,6 +346,12 @@ class MarketDataClient:
             sub, rest = parts[1], "/".join(parts[2:])
             m = {
                 "chain": lambda: ep.options_chain(rest),
+                "chain-historical": lambda: ep.options_chain_historical(
+                    rest,
+                    start=params.get("start"),
+                    end=params.get("end"),
+                    expiration=params.get("expiration"),
+                ),
                 "greeks": lambda: ep.options_greeks(rest),
                 "iv-surface": lambda: ep.iv_surface(rest),
                 "unusual-activity": lambda: ep.unusual_options_activity(**params),
@@ -661,6 +667,42 @@ class MarketDataClient:
         """Eulerpool options & derivatives (chain/AAPL, greeks, iv-surface, ...)."""
         return self._euler_request(f"options/{endpoint}", **params)
     options_data = options  # alias
+
+    def options_chain_historical(
+        self,
+        ticker: str,
+        start: date | str | None = None,
+        end: date | str | None = None,
+        expiration: str | None = None,
+    ) -> pd.DataFrame:
+        """Historical options chain over a date range via Eulerpool.
+
+        Parameters
+        ----------
+        ticker : str
+            Underlying symbol (e.g. ``"AAPL"``).
+        start, end : date | str | None
+            Inclusive date window (ISO format accepted).
+        expiration : str | None
+            Optional ISO expiry filter (``"2025-12-20"``).
+
+        Returns
+        -------
+        pd.DataFrame
+            Normalized options chain with columns:
+            ``timestamp, ticker, expiration, strike, option_type, bid, ask,
+            last, volume, open_interest, implied_volatility, in_the_money``.
+        """
+        params: dict[str, Any] = {}
+        if start:
+            params["start"] = start.isoformat() if isinstance(start, date) else start
+        if end:
+            params["end"] = end.isoformat() if isinstance(end, date) else end
+        if expiration:
+            params["expiration"] = expiration
+
+        result = self._euler_request(f"options/chain-historical/{ticker}", **params)
+        return result if isinstance(result, pd.DataFrame) else pd.DataFrame(result)
 
     def alternative(self, endpoint: str, **params) -> dict | list:
         """Eulerpool alternative data (fear-greed, superinvestors, congress, ...)."""

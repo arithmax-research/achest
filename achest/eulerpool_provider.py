@@ -845,10 +845,203 @@ class EulerpoolProvider:
         data = self._get(f"/derivatives/options/flow/{identifier}", days=days, limit=limit)
         return pd.DataFrame(data) if isinstance(data, list) else pd.DataFrame()
 
-    def vix_term_structure(self, days: int = 30) -> pd.DataFrame:
-        """VIX futures term structure (contango/backwardation)."""
-        data = self._get("/market/vix/term-structure", days=days)
-        return pd.DataFrame(data) if isinstance(data, list) else pd.DataFrame()
+    def options_chain_historical(
+        self,
+        ticker: str,
+        start: date | str | None = None,
+        end: date | str | None = None,
+        expiration: str | None = None,
+    ) -> pd.DataFrame:
+        """Historical options chain over a date range.
+
+        Fetches option chains for each day in ``[start, end]`` and normalizes
+        into a time-series DataFrame with columns:
+
+            timestamp, ticker, expiration, strike, option_type,
+            bid, ask, last, volume, open_interest, implied_volatility,
+            in_the_money
+
+        If Eulerpool's ``/market/options/{ticker}`` supports ``startdate`` /
+        ``enddate`` query parameters (millisecond epochs, same convention as
+        ``equity_quotes``), a single request covers the whole window.
+        Otherwise the method falls back to iterating day-by-day and merging
+        per-day snapshots.
+
+        Parameters
+        ----------
+        ticker : str
+            Underlying symbol (e.g. ``"AAPL"``).
+        start, end : date | str | None
+            Inclusive date window.  ISO-format strings accepted.  If omitted,
+            fetches the latest chain (delegates to :meth:`options_chain`).
+        expiration : str | None
+            Optional ISO expiry filter (``"2025-12-20"``).
+
+        Returns
+        -------
+        pd.DataFrame
+            Empty DataFrame if no data available.
+        """
+        # Normalize string dates -> date objects
+        if isinstance(start, str):
+            start = date.fromisoformat(start)
+        if isinstance(end, str):
+            end = date.fromisoformat(end)
+
+        if not start and not end:
+            raw = self.options_chain(ticker, expiration=expiration)
+            return self._normalize_options_chain(raw, ticker, None)
+
+        params: dict[str, Any] = {}
+        if expiration:
+            params["expiration"] = expiration
+        if start:
+            params["startdate"] = int(
+                datetime.combine(start, datetime.min.time()).timestamp() * 1000
+            )
+        if end:
+            params["enddate"] = int(
+                datetime.combine(end, datetime.max.time()).timestamp() * 1000
+            )
+
+        raw = self._get(f"/market/options/{ticker}", **params)
+
+        if isinstance(raw, list) and raw:
+            return self._normalize_options_chain_list(raw, ticker)
+
+        if isinstance(raw, dict):
+            return self._options_chain_date_range(
+                ticker, start, end, expiration=expiration
+            )
+
+        return pd.DataFrame()
+
+    def _options_chain_date_range(
+        self,
+        ticker: str,
+        start: date | None,
+        end: date | None,
+        expiration: str | None = None,
+    ) -> pd.DataFrame:
+        """Iterate day-by-day over ``[start, end]`` and merge option chains."""
+        if not start:
+            start = date.today()
+        if not end:
+            end = date.today()
+
+        frames: list[pd.DataFrame] = []
+        cursor = start
+        while cursor <= end:
+            raw = self.options_chain(ticker, expiration=expiration)
+            frame = self._normalize_options_chain(raw, ticker, cursor)
+            if not frame.empty:
+                frames.append(frame)
+            cursor += timedelta(days=1)
+
+        if not frames:
+            return pd.DataFrame()
+        result = pd.concat(frames, ignore_index=True)
+        result["timestamp"] = pd.to_datetime(result["timestamp"], utc=True)
+        return result.set_index("timestamp").sort_index()
+
+    @staticmethod
+    def _normalize_options_chain(
+        raw: dict | None, ticker: str, snapshot_date: date | None
+    ) -> pd.DataFrame:
+        """Normalize a single options-chain snapshot into a DataFrame."""
+        if not raw or not isinstance(raw, dict):
+            return pd.DataFrame()
+
+        rows: list[dict] = []
+        snap_ts = (
+            pd.Timestamp(datetime.combine(snapshot_date, datetime.min.time()), tz="UTC")
+            if snapshot_date
+            else pd.Timestamp.utcnow()
+        )
+
+        expirations: list[str] = []
+        if isinstance(raw.get("expirations"), list):
+            expirations = raw["expirations"]
+        elif isinstance(raw.get("chain"), dict):
+            expirations = list(raw["chain"].keys())
+
+        for exp in expirations:
+            exp_data = (
+                raw.get("chain", {}).get(exp, {})
+                if isinstance(raw.get("chain"), dict)
+                else raw
+            )
+            for opt_type in ("calls", "puts"):
+                contracts = exp_data.get(opt_type, []) if isinstance(exp_data, dict) else []
+                if isinstance(contracts, dict):
+                    contracts = [contracts]
+                for c in contracts:
+                    if not isinstance(c, dict):
+                        continue
+                    rows.append({
+                        "timestamp": snap_ts,
+                        "ticker": ticker,
+                        "expiration": exp,
+                        "option_type": opt_type.rstrip("s"),
+                        "strike": float(c.get("strike", 0) or 0),
+                        "bid": float(c.get("bid", 0) or 0),
+                        "ask": float(c.get("ask", 0) or 0),
+                        "last": float(c.get("last", c.get("lastPrice", 0)) or 0),
+                        "volume": int(c.get("volume", 0) or 0),
+                        "open_interest": int(c.get("openInterest", 0) or 0),
+                        "implied_volatility": float(c.get("impliedVolatility", 0) or 0),
+                        "in_the_money": bool(c.get("inTheMoney", False)),
+                        "contract_symbol": c.get("contractSymbol", c.get("symbol", "")),
+                    })
+
+        for opt_type in ("calls", "puts"):
+            contracts = raw.get(opt_type, [])
+            if isinstance(contracts, list):
+                for c in contracts:
+                    if not isinstance(c, dict):
+                        continue
+                    rows.append({
+                        "timestamp": snap_ts,
+                        "ticker": ticker,
+                        "expiration": c.get("expiration", ""),
+                        "option_type": opt_type.rstrip("s"),
+                        "strike": float(c.get("strike", 0) or 0),
+                        "bid": float(c.get("bid", 0) or 0),
+                        "ask": float(c.get("ask", 0) or 0),
+                        "last": float(c.get("last", c.get("lastPrice", 0)) or 0),
+                        "volume": int(c.get("volume", 0) or 0),
+                        "open_interest": int(c.get("openInterest", 0) or 0),
+                        "implied_volatility": float(c.get("impliedVolatility", 0) or 0),
+                        "in_the_money": bool(c.get("inTheMoney", False)),
+                        "contract_symbol": c.get("contractSymbol", c.get("symbol", "")),
+                    })
+
+        return pd.DataFrame(rows) if rows else pd.DataFrame()
+
+    @staticmethod
+    def _normalize_options_chain_list(raw: list, ticker: str) -> pd.DataFrame:
+        """Normalize a list of dated chain snapshots into a DataFrame."""
+        frames: list[pd.DataFrame] = []
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            snap_raw = entry.get("date", entry.get("timestamp", entry.get("snapshot_date")))
+            snap_date = None
+            if snap_raw:
+                try:
+                    snap_date = pd.to_datetime(snap_raw, utc=True).date()
+                except Exception:
+                    snap_date = None
+            chain_data = entry.get("chain", entry)
+            frame = EulerpoolProvider._normalize_options_chain(chain_data, ticker, snap_date)
+            if not frame.empty:
+                frames.append(frame)
+
+        if not frames:
+            return pd.DataFrame()
+        result = pd.concat(frames, ignore_index=True)
+        result["timestamp"] = pd.to_datetime(result["timestamp"], utc=True)
+        return result.set_index("timestamp").sort_index()
 
     def cboe_indices(
         self, symbol: str | None = None, days: int = 30,

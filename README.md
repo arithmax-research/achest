@@ -113,13 +113,45 @@ The grouped methods cover:
 | `sentiment()` | News, social, insider sentiment, and SWOT |
 | `macro()` | Country risk, calendars, FRED, credit spreads, and latest observations |
 | `crypto()` | Market overview, analysis, fear and greed, funding, open interest, DeFi, and on-chain data |
-| `options()` | Chains, Greeks, implied-volatility surfaces, unusual activity, and VIX term structure |
+| `options()` | Chains, Greeks, implied-volatility surfaces, unusual activity, VIX term structure, and options flow |
+| `options_chain_historical()` | Historical options chains over a date range (start/end) with bid, ask, last, volume, open interest, and implied volatility |
 | `alternative()` | Fear and greed, superinvestors, congressional trading, patents, government contracts, and Google Trends |
 | `etf()` | ETF profiles, holdings, and flows |
 | `market()` | Quotes, movers, status, breadth, and market indicators |
 | `news()` | Company and market news, transcripts, and transcript search |
 
 Additional helpers include `index_constituents()`, `yield_curve()`, `forex_rates()`, and `logo()`. These methods return dictionaries, lists, pandas DataFrames, or image bytes according to the endpoint.
+
+### Historical options chains with date ranges
+
+Advanced strategies often need historical option prices across a date range. The `options_chain_historical()` method fetches normalized option chains for every day in `[start, end]`, falling back to per-day snapshots if the provider returns single snapshots instead of dated lists.
+
+```python
+from datetime import date
+from achest import MarketDataClient
+
+with MarketDataClient(eulerpool_direct=True) as client:
+    # Historical options chain for AAPL over Q1 2025
+    df = client.options_chain_historical(
+        "AAPL",
+        start=date(2025, 1, 1),
+        end=date(2025, 3, 31),
+        expiration="2025-03-21",
+    )
+    print(df.head())
+    # Columns: timestamp, ticker, expiration, strike, option_type,
+    #          bid, ask, last, volume, open_interest, implied_volatility,
+    #          in_the_money, contract_symbol
+```
+
+`start` and `end` accept ISO date strings or `datetime.date` values. `expiration` is optional — omit it to include all available expirations.
+
+The same data is available through the FastAPI server:
+
+```bash
+curl -H "Authorization: Bearer $DATA_API_TOKEN" \
+  "https://achestv2.misango.me/v1/eulerpool/options/chain-historical/AAPL?start=2025-01-01&end=2025-03-31&expiration=2025-03-21"
+```
 
 ## Saving and Q Tables
 

@@ -418,6 +418,22 @@ def eulerpool_vix_term_structure(days: int = Query(default=30)):
     """VIX futures term structure."""
     return _json_response(_get_eulerpool().vix_term_structure(days).to_dict(orient="records"))
 
+@app.get("/v1/eulerpool/options/chain-historical/{ticker}", dependencies=[Depends(require_client_token)])
+def eulerpool_options_chain_historical(
+    ticker: str,
+    start: str | None = Query(default=None),
+    end: str | None = Query(default=None),
+    expiration: str | None = Query(default=None),
+):
+    """Historical options chain over a date range via Eulerpool.
+
+    Returns a list of option chain records normalized across the [start, end]
+    window, with columns: timestamp, ticker, expiration, strike, option_type,
+    bid, ask, last, volume, open_interest, implied_volatility, in_the_money.
+    """
+    df = _get_eulerpool().options_chain_historical(ticker, start, end, expiration)
+    return _json_response(df.to_dict(orient="records"))
+
 # ── Alternative Data ───────────────────────────────────────────────────────
 
 @app.get("/v1/eulerpool/alternative/fear-greed", dependencies=[Depends(require_client_token)])
