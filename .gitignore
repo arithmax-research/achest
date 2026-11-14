@@ -7,6 +7,7 @@ updating.md
 /.pytest_cache
 /tests/*
 !/tests/test_lean_zip_format.py
+!/tests/test_ipc_daemon.py
 /dist
 /Custom_Downloads
 ***.env***

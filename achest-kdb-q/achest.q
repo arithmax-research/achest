@@ -97,10 +97,12 @@ fetch:{[syms;st;en;res;opts]
 / ── 4-arg shorthand ─────────────────────────────────
 fetch4:{[syms;st;en;res] .achest.fetch[syms;st;en;res;()!()] }
 
-/ ── Direct q IPC fetch (not available — blocked by KX license) ──
-/   q's `hopen` to remote hosts is blocked by the KX license daemon
-/   (`'license error: daemon returned error 'blocked`). IPC cannot
-/   be used. Use `.achest.setBackend[`http]` or `daemon` instead.
+/ ── q IPC fetch (via the achest daemon's IPC mode) ────────────────
+/   q's `hopen` to a *remote* kdb+ process is blocked by the KX
+/   license daemon, but `hopen` to a local process is fine. Run the
+/   Python daemon in IPC mode (`ACHEST_DAEMON_IPC=1 python3
+/   achest-kdb-q/achest_daemon.py`) and point `ipc`/`ipcFetch` at it;
+/   the daemon returns the table directly over the wire (no files).
 / ─────────────────────────────────────────────────────────────────
 ipcConnect:{[host;port]
   h:hopen `$ (":" , (string host) , ":" , (string port));
@@ -109,9 +111,9 @@ ipcConnect:{[host;port]
 
 ipcFetch:{[h;syms;st;en;res;prov]
   p:$[`~prov; `auto; prov];
-  / The server now returns the table directly over the wire
-  h (`fetch; syms; st; en; res; p)
- }                / if server signaled an error  
+  r:h (`fetch; syms; st; en; res; p);
+  $[10h=type r; value r; r]
+ }
 
 ipcClose:{[h] hclose h; }
 

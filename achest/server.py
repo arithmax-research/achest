@@ -13,7 +13,7 @@ import zipfile
 from dotenv import load_dotenv
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, Field, field_validator
 
 from .service import (
@@ -175,6 +175,15 @@ def data(request: DownloadRequest) -> Response:
 @app.get("/health")
 def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/achest.q")
+def serve_achest_q() -> FileResponse:
+    """Serve the pure-q achest.q client library for remote loading via \\l."""
+    q_path = os.path.join(
+        os.path.dirname(os.path.abspath(__file__)), "..", "achest-kdb-q", "achest.q"
+    )
+    return FileResponse(q_path, media_type="text/plain")
 
 
 # ═══════════════════════════════════════════════════════════════════════════
