@@ -8,50 +8,75 @@ import inspect
 
 
 def test_normalize_options_chain_dict():
-    """Test _normalize_options_chain with chain dict containing expirations."""
+    """Test _normalize_options_chain with real Eulerpool response format."""
     mock_chain = {
-        "expirations": ["2025-03-21"],
-        "chain": {
-            "2025-03-21": {
+        "ticker": "AAPL",
+        "asOf": "2026-11-13",
+        "totalExpirations": 1,
+        "returnedExpirations": 1,
+        "expirations": [
+            {
+                "expiration_date": "2026-11-16",
                 "calls": [
                     {
-                        "contractSymbol": "AAPL250321C00220000",
+                        "option_symbol": "AAPL261116C00220000",
+                        "type": "call",
                         "strike": 220.0,
                         "bid": 5.50,
                         "ask": 5.75,
-                        "last": 5.60,
+                        "last_price": 5.60,
                         "volume": 1250,
-                        "openInterest": 3400,
-                        "impliedVolatility": 0.28,
-                        "inTheMoney": True,
+                        "open_interest": 3400,
+                        "implied_vol": 0.28,
+                        "in_the_money": True,
+                        "delta": 0.75,
+                        "gamma": 0.02,
+                        "vega": 0.15,
+                        "theta": -0.05,
+                        "rho": 0.03,
+                        "last_trade_time": "2026-11-13T10:30:00.000Z",
                     },
                     {
-                        "contractSymbol": "AAPL250321C00230000",
+                        "option_symbol": "AAPL261116C00230000",
+                        "type": "call",
                         "strike": 230.0,
                         "bid": 2.10,
                         "ask": 2.25,
-                        "last": 2.15,
+                        "last_price": 2.15,
                         "volume": 890,
-                        "openInterest": 2100,
-                        "impliedVolatility": 0.31,
-                        "inTheMoney": False,
+                        "open_interest": 2100,
+                        "implied_vol": 0.31,
+                        "in_the_money": False,
+                        "delta": 0.30,
+                        "gamma": 0.04,
+                        "vega": 0.18,
+                        "theta": -0.06,
+                        "rho": 0.02,
+                        "last_trade_time": "2026-11-13T11:00:00.000Z",
                     },
                 ],
                 "puts": [
                     {
-                        "contractSymbol": "AAPL250321P00220000",
+                        "option_symbol": "AAPL261116P00220000",
+                        "type": "put",
                         "strike": 220.0,
                         "bid": 0.85,
                         "ask": 0.95,
-                        "last": 0.90,
+                        "last_price": 0.90,
                         "volume": 650,
-                        "openInterest": 1800,
-                        "impliedVolatility": 0.29,
-                        "inTheMoney": False,
+                        "open_interest": 1800,
+                        "implied_vol": 0.29,
+                        "in_the_money": False,
+                        "delta": -0.25,
+                        "gamma": 0.02,
+                        "vega": 0.15,
+                        "theta": -0.04,
+                        "rho": -0.02,
+                        "last_trade_time": "2026-11-13T10:45:00.000Z",
                     },
                 ],
             }
-        },
+        ],
     }
 
     df = EulerpoolProvider._normalize_options_chain(mock_chain, "AAPL", date(2025, 3, 21))
@@ -63,36 +88,61 @@ def test_normalize_options_chain_dict():
     assert df["bid"].iloc[0] == 5.50
     assert df["last"].iloc[2] == 0.90
     assert df["implied_volatility"].iloc[0] == 0.28
-    print("  PASSED: dict with chain expirations")
+    assert df["delta"].iloc[0] == 0.75
+    assert df["contract_symbol"].iloc[0] == "AAPL261116C00220000"
+    print("  PASSED: dict with chain expirations (real Eulerpool format)")
 
 
 def test_normalize_options_chain_flat():
-    """Test _normalize_options_chain with flat calls/puts at top level."""
+    """Test _normalize_options_chain with real Eulerpool format (single expiration)."""
     mock_flat = {
-        "calls": [
+        "ticker": "MSFT",
+        "asOf": "2026-06-20",
+        "totalExpirations": 1,
+        "returnedExpirations": 1,
+        "expirations": [
             {
-                "strike": 200.0,
-                "bid": 10.0,
-                "ask": 10.50,
-                "last": 10.25,
-                "volume": 500,
-                "openInterest": 1000,
-                "impliedVolatility": 0.25,
-                "inTheMoney": True,
-                "expiration": "2025-06-20",
-            }
-        ],
-        "puts": [
-            {
-                "strike": 200.0,
-                "bid": 1.50,
-                "ask": 1.75,
-                "last": 1.60,
-                "volume": 300,
-                "openInterest": 800,
-                "impliedVolatility": 0.27,
-                "inTheMoney": False,
-                "expiration": "2025-06-20",
+                "expiration_date": "2026-06-20",
+                "calls": [
+                    {
+                        "option_symbol": "MSFT260620C00200000",
+                        "type": "call",
+                        "strike": 200.0,
+                        "bid": 10.0,
+                        "ask": 10.50,
+                        "last_price": 10.25,
+                        "volume": 500,
+                        "open_interest": 1000,
+                        "implied_vol": 0.25,
+                        "in_the_money": True,
+                        "delta": 0.65,
+                        "gamma": 0.03,
+                        "vega": 0.20,
+                        "theta": -0.07,
+                        "rho": 0.04,
+                        "last_trade_time": "2026-06-20T09:00:00.000Z",
+                    }
+                ],
+                "puts": [
+                    {
+                        "option_symbol": "MSFT260620P00200000",
+                        "type": "put",
+                        "strike": 200.0,
+                        "bid": 1.50,
+                        "ask": 1.75,
+                        "last_price": 1.60,
+                        "volume": 300,
+                        "open_interest": 800,
+                        "implied_vol": 0.27,
+                        "in_the_money": False,
+                        "delta": -0.35,
+                        "gamma": 0.03,
+                        "vega": 0.20,
+                        "theta": -0.06,
+                        "rho": -0.03,
+                        "last_trade_time": "2026-06-20T09:15:00.000Z",
+                    }
+                ],
             }
         ],
     }
@@ -100,8 +150,10 @@ def test_normalize_options_chain_flat():
     df = EulerpoolProvider._normalize_options_chain(mock_flat, "MSFT", None)
     assert len(df) == 2, f"Expected 2 rows, got {len(df)}"
     assert df["ticker"].iloc[0] == "MSFT"
-    assert df["expiration"].iloc[0] == "2025-06-20"
-    print("  PASSED: flat calls/puts at top level")
+    assert df["expiration"].iloc[0] == "2026-06-20"
+    assert df["option_type"].iloc[0] == "call"
+    assert df["option_type"].iloc[1] == "put"
+    print("  PASSED: real Eulerpool format with calls + puts")
 
 
 def test_normalize_empty():
@@ -114,48 +166,64 @@ def test_normalize_empty():
 
 
 def test_normalize_options_chain_list():
-    """Test _normalize_options_chain_list with dated snapshots."""
+    """Test _normalize_options_chain_list with real Eulerpool format entries."""
     mock_list = [
         {
-            "date": "2025-01-02",
-            "chain": {
-                "calls": [
-                    {
-                        "strike": 150.0,
-                        "bid": 5.0,
-                        "ask": 5.25,
-                        "last": 5.10,
-                        "volume": 1000,
-                        "openInterest": 2000,
-                        "impliedVolatility": 0.22,
-                        "inTheMoney": True,
-                    }
-                ]
-            },
+            "ticker": "SPY",
+            "asOf": "2025-01-02",
+            "expirations": [
+                {
+                    "expiration_date": "2025-01-17",
+                    "calls": [
+                        {
+                            "option_symbol": "SPY250117C00150000",
+                            "type": "call",
+                            "strike": 150.0,
+                            "bid": 5.0,
+                            "ask": 5.25,
+                            "last_price": 5.10,
+                            "volume": 1000,
+                            "open_interest": 2000,
+                            "implied_vol": 0.22,
+                            "in_the_money": True,
+                            "last_trade_time": "2025-01-02T10:00:00.000Z",
+                        }
+                    ],
+                    "puts": [],
+                }
+            ],
         },
         {
-            "date": "2025-01-03",
-            "chain": {
-                "calls": [
-                    {
-                        "strike": 150.0,
-                        "bid": 5.50,
-                        "ask": 5.75,
-                        "last": 5.60,
-                        "volume": 1100,
-                        "openInterest": 2100,
-                        "impliedVolatility": 0.23,
-                        "inTheMoney": True,
-                    }
-                ]
-            },
+            "ticker": "SPY",
+            "asOf": "2025-01-03",
+            "expirations": [
+                {
+                    "expiration_date": "2025-01-17",
+                    "calls": [
+                        {
+                            "option_symbol": "SPY250117C00150000",
+                            "type": "call",
+                            "strike": 150.0,
+                            "bid": 5.50,
+                            "ask": 5.75,
+                            "last_price": 5.60,
+                            "volume": 1100,
+                            "open_interest": 2100,
+                            "implied_vol": 0.23,
+                            "in_the_money": True,
+                            "last_trade_time": "2025-01-03T10:00:00.000Z",
+                        }
+                    ],
+                    "puts": [],
+                }
+            ],
         },
     ]
 
     df = EulerpoolProvider._normalize_options_chain_list(mock_list, "SPY")
     assert len(df) == 2, f"Expected 2 rows, got {len(df)}"
     assert len(df.index.unique()) == 2, "Expected 2 distinct timestamps"
-    print("  PASSED: list of dated snapshots")
+    print("  PASSED: list of dated snapshots (real Eulerpool format)")
 
 
 def test_method_signatures():

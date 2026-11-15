@@ -420,16 +420,24 @@ class MarketDataClient:
         raise ValueError(f"Unsupported Eulerpool path: {path}")
 
     def _request(self, method: str, path: str, **kwargs) -> httpx.Response:
-        """Send an HTTP request, retrying on transient transport errors.
+        """Send an HTTP request, retrying on transient transport errors and 5xx statuses.
 
         Retries with exponential backoff for ``ConnectError``,
-        ``TimeoutException``, and ``RemoteProtocolError``.  Non-2xx
-        HTTP statuses are **not** retried — they raise immediately.
+        ``TimeoutException``, ``RemoteProtocolError``, and HTTP 5xx
+        responses (e.g. 502 Bad Gateway, 503 Service Unavailable).
+        Non-5xx HTTP errors raise immediately.
         """
         last_exc: Exception | None = None
         for attempt in range(self._max_retries):
             try:
-                return getattr(self.client, method)(path, **kwargs)
+                response = getattr(self.client, method)(path, **kwargs)
+                # Retry on 5xx (server-side) errors — transient gateway/proxy issues
+                if 500 <= response.status_code < 600:
+                    if attempt < self._max_retries - 1:
+                        time.sleep(self._retry_delay * (2**attempt))
+                        continue
+                    response.raise_for_status()
+                return response
             except _RETRYABLE_EXCEPTIONS as exc:
                 last_exc = exc
                 if attempt < self._max_retries - 1:
