@@ -12,7 +12,7 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Deploy to Hetzner
-        uses: appleboy/ssh-action@v1.0.0
+        uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.HETZNER_HOST }}
           username: ${{ secrets.HETZNER_USER }}
