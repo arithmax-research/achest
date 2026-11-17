@@ -18,7 +18,7 @@ jobs:
           username: ${{ secrets.HETZNER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            cd /home/misango/codechest/achest
+            cd /root/codechest/achest
             git pull origin main --ff-only
             docker compose up -d --build api
             docker compose logs --tail=30 api
