@@ -465,7 +465,10 @@ def _databento(symbol: str, request: DataRequest) -> pd.DataFrame:
         start=request.start.isoformat(),
         end=request.end.isoformat(),
         stype_in=stype_in,
-        stype_out=SType.RAW_SYMBOL,  # return raw symbols, not numeric instrument_ids
+        # stype_out defaults to instrument_id — RAW_SYMBOL is not a valid output
+        # symbology per Databento docs (only instrument_id is valid for output).
+        # The user-facing symbol is re-attached in fetch_symbol(), so we don't
+        # need raw_symbol output here.
     ).to_df()
 
     if data.empty:

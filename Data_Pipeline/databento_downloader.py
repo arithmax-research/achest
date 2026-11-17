@@ -167,7 +167,10 @@ class DatabentoFuturesDownloader:
                 start=start_date.strftime('%Y-%m-%d'),
                 end=end_date.strftime('%Y-%m-%d'),
                 stype_in=stype_in,
-                stype_out=SType.RAW_SYMBOL,  # return raw symbols, not numeric instrument_ids
+                # stype_out defaults to instrument_id — RAW_SYMBOL is not a valid
+                # output symbology per Databento docs (only instrument_id valid
+                # for output). The root symbol is tracked separately for Lean
+                # formatting, so we don't need raw_symbol output here.
             )
             
             # Convert to DataFrame
