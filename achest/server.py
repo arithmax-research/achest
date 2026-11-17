@@ -24,6 +24,7 @@ from .service import (
     select_provider,
     to_lean_zip,
     to_q_table,
+    convert_local_zst_to_lean,
 )
 from .hot_universe import is_hot
 
@@ -92,6 +93,14 @@ class DownloadRequest(BaseModel):
         if value not in {"json", "csv", "parquet", "lean", "q"}:
             raise ValueError("format must be json, csv, parquet, lean, or q")
         return value
+
+
+class LocalZstRequest(BaseModel):
+    input_folder: str = Field(..., description="Folder containing Databento .zst / .csv.zst downloads")
+    symbol_root: str = Field(default="ES", description="Futures root symbol, e.g. ES or NQ")
+    market: str = Field(default="cme", description="LEAN market folder, e.g. cme")
+    output_root: str | None = Field(default=None, description="LEAN data root (defaults to cwd/data/future)")
+    rth: bool = Field(default=True, description="Keep only regular trading hours 09:30-16:00 ET")
 
 
 def require_client_token(authorization: str | None = Header(default=None)) -> None:
@@ -170,6 +179,30 @@ def data(request: DownloadRequest) -> Response:
         return Response(output.getvalue(), media_type="application/octet-stream", headers={"Content-Disposition": "attachment; filename=market-data.parquet"})
     except Exception as error:
         raise HTTPException(status_code=502, detail=f"output serialization failed: {error}") from error
+
+
+@app.post("/v1/convert-local-zst", dependencies=[Depends(require_client_token)])
+def convert_local_zst(request: LocalZstRequest) -> dict:
+    """
+    Read Databento .zst / .csv.zst downloads from a local folder and convert
+    them to QuantConnect LEAN-format minute zips.
+
+    This is the server-side equivalent of the databento_to_lean.py script —
+    no local Python script needed; the achest server does the conversion.
+    """
+    try:
+        result = convert_local_zst_to_lean(
+            input_folder=request.input_folder,
+            symbol_root=request.symbol_root,
+            market=request.market,
+            output_root=request.output_root,
+            rth=request.rth,
+        )
+        return {"status": "ok", **result}
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except Exception as error:  # pragma: no cover
+        raise HTTPException(status_code=500, detail=f"conversion failed: {error}") from error
 # ── Health ─────────────────────────────────────────────────────────────────
 
 @app.get("/health")

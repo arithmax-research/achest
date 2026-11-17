@@ -400,22 +400,77 @@ def _massive(symbol: str, request: DataRequest) -> pd.DataFrame:
     } for row in response.json().get("results", []))
 
 
+def _databento_symbol(symbol: str) -> tuple[str, "SType"]:
+    """
+    Map a user-facing symbol to a Databento-native symbol + stype_in.
+
+    Databento symbology (from docs/conventions/symbology.md):
+      - raw_symbol: publisher symbols like ESH3, ESZ24 (specific contract months)
+      - continuous: continuous contracts like ES.c.0 (front month), ES.c.1 (2nd month)
+      - parent: root symbols like ES
+
+    ES.FUT is NOT a native Databento symbol.  The native equivalent is ES.c.0
+    (continuous front-month) — we map .FUT to that and use SType.CONTINUOUS so
+    Databento returns *only* that continuous contract, not every roll in the range.
+    """
+    from databento import SType
+
+    raw = symbol.strip()
+    s = raw.upper()
+
+    # Specific raw contract like ESH24, ESZ24 — pass through as raw_symbol
+    if len(s) >= 4 and s[:-2].isalpha() and s[-2:].isdigit():
+        return s, SType.RAW_SYMBOL
+
+    # Already a Databento continuous contract like ES.c.0 (case-insensitive check)
+    if ".c." in raw.lower():
+        root = raw.split(".")[0]
+        return f"{root.upper()}.c.0", SType.CONTINUOUS
+
+    # User-friendly .FUT suffix (e.g. ES.FUT) -> Databento continuous front month
+    if s.endswith(".FUT"):
+        return s[:-4] + ".c.0", SType.CONTINUOUS
+
+    # Plain root symbol like ES -> continuous front month
+    if s.isalpha():
+        return s + ".c.0", SType.CONTINUOUS
+
+    # Fallback: treat as raw symbol
+    return s, SType.RAW_SYMBOL
+
+
 def _databento(symbol: str, request: DataRequest) -> pd.DataFrame:
     import databento as db
-    from databento import Schema, SType
+    from databento import Schema
 
     key = os.getenv("DATA_BENTO_API_KEY")
     if not key:
         raise RuntimeError("DATA_BENTO_API_KEY is not configured on the server")
-    continuous = symbol.replace(".FUT", ".c.0")
-    schema = {"tick": Schema.MBP_1, "second": Schema.OHLCV_1S, "minute": Schema.OHLCV_1M, "hour": Schema.OHLCV_1H, "daily": Schema.OHLCV_1D}[request.resolution]
+
+    # Map to a single Databento-native symbol — only the dataset requested, nothing extra
+    databento_symbol, stype_in = _databento_symbol(symbol)
+
+    schema = {
+        "tick": Schema.MBP_1,
+        "second": Schema.OHLCV_1S,
+        "minute": Schema.OHLCV_1M,
+        "hour": Schema.OHLCV_1H,
+        "daily": Schema.OHLCV_1D,
+    }[request.resolution]
+
     data = db.Historical(key=key).timeseries.get_range(
-        dataset="GLBX.MDP3", symbols=continuous, schema=schema,
-        start=request.start.isoformat(), end=request.end.isoformat(),
-        stype_in=SType.CONTINUOUS if ".c." in continuous else SType.RAW_SYMBOL,
+        dataset="GLBX.MDP3",
+        symbols=databento_symbol,
+        schema=schema,
+        start=request.start.isoformat(),
+        end=request.end.isoformat(),
+        stype_in=stype_in,
+        stype_out=SType.RAW_SYMBOL,  # return raw symbols, not numeric instrument_ids
     ).to_df()
+
     if data.empty:
         return data
+
     # Databento OHLCV schemas return timestamp as the index named "ts_event"
     if "ts_event" in data.columns:
         data = data.rename(columns={"ts_event": "timestamp"}).set_index("timestamp")
@@ -687,6 +742,265 @@ def to_lean_zip(frame: pd.DataFrame, resolution: str) -> dict[str, bytes]:
         result[zip_name] = buf.getvalue()
 
     return result
+
+
+# ── Local Databento .zst → LEAN converter ──────────────────────────────────
+
+import re as _re
+from pathlib import Path as _Path
+
+_CONTRACT_RE = _re.compile(r"^([A-Z]{1,3})([FGHJKMNQUVXZ])(\d{1,2})$")
+_MONTH_CODES = {
+    "F": 1, "G": 2, "H": 3, "J": 4, "K": 5, "M": 6,
+    "N": 7, "Q": 8, "U": 9, "V": 10, "X": 11, "Z": 12,
+}
+
+
+def _contract_year(year_digits: str) -> int:
+    d = int(year_digits)
+    return 2020 + d if len(year_digits) == 1 else 2000 + d
+
+
+def _parse_future_symbol(raw_symbol: str) -> tuple[str, str | None]:
+    """Split a Databento futures instrument symbol into (root, expiry_YYYYMM)."""
+    s = raw_symbol.strip().upper()
+    if "-" in s:
+        s = s.split("-", 1)[0]  # roll symbols: take first leg
+    m = _CONTRACT_RE.match(s)
+    if m:
+        root, month_code, year_digits = m.groups()
+        year = _contract_year(year_digits)
+        month = _MONTH_CODES[month_code]
+        return root, f"{year}{month:02d}"
+    return s, None
+
+
+def _ms_since_midnight(ts) -> int:
+    midnight = ts.normalize()
+    return int((ts - midnight).total_seconds() * 1000)
+
+
+def _read_local_zst_file(path) -> pd.DataFrame:
+    """Read a single Databento .csv.zst / .csv file into a normalized DataFrame."""
+    import zstandard as zstd
+    import io
+
+    path = path if isinstance(path, _Path) else _Path(path)
+
+    if path.name.lower().endswith(".zst"):
+        dctx = zstd.ZstdDecompressor()
+        with path.open("rb") as src:
+            csv_text = dctx.decompress(src.read()).decode()
+        df = pd.read_csv(io.StringIO(csv_text))
+    else:
+        df = pd.read_csv(path)
+
+    # timestamp
+    ts_col = "ts_event" if "ts_event" in df.columns else None
+    if ts_col is None:
+        for c in ["timestamp", "time", "ts_recv"]:
+            if c in df.columns:
+                ts_col = c
+                break
+    if ts_col is None:
+        raise ValueError(f"No timestamp column in {path.name}")
+
+    df[ts_col] = pd.to_datetime(df[ts_col], utc=True).dt.tz_convert("US/Eastern")
+
+    # symbol
+    if "symbol" not in df.columns:
+        df["symbol"] = "ES"
+    df["symbol"] = df["symbol"].astype(str).str.upper().str.strip()
+
+    # OHLCV
+    colmap = {}
+    for c in ["open", "high", "low", "close", "volume"]:
+        if c in df.columns:
+            colmap[c] = c
+        else:
+            matches = [col for col in df.columns if c.lower() == str(col).lower()]
+            if matches:
+                colmap[c] = matches[0]
+    missing = [c for c in ["open", "high", "low", "close", "volume"] if c not in colmap]
+    if missing:
+        raise ValueError(f"Missing OHLCV columns {missing} in {path.name}. Available: {list(df.columns)}")
+
+    out = pd.DataFrame({
+        "ts_event": df[ts_col],
+        "symbol": df["symbol"],
+    })
+    for c in ["open", "high", "low", "close", "volume"]:
+        out[c] = pd.to_numeric(df[colmap[c]], errors="coerce")
+
+    out = out.dropna(subset=["ts_event", "open", "high", "low", "close"])
+    out["volume"] = pd.to_numeric(out["volume"], errors="coerce").fillna(0).astype("int64")
+    out = out.sort_values("ts_event").reset_index(drop=True)
+    return out[["ts_event", "symbol", "open", "high", "low", "close", "volume"]]
+
+
+def convert_local_zst_to_lean(
+    input_folder: str,
+    symbol_root: str = "ES",
+    market: str = "cme",
+    output_root: str | None = None,
+    rth: bool = True,
+) -> dict:
+    """
+    Read Databento .zst / .csv.zst downloads from a local folder and write
+    QuantConnect LEAN-format minute zips.
+
+    Output layout (LEAN futures format):
+        data/future/{market}/minute/{symbol}/
+            {YYYYMMDD}_trade.zip
+              inside: {YYYYMMDD}_{root}_minute_trade_{EXPIRY}.csv
+              line:   ms_since_midnight,Open,High,Low,Close,Volume
+
+    Returns a dict with conversion stats.
+    """
+    import zipfile
+    from datetime import time as _time
+
+    inp = _Path(input_folder)
+    if not inp.exists():
+        raise FileNotFoundError(f"Input folder not found: {inp}")
+
+    # Discover .zst and .zip files
+    patterns = ["*.zst", "*.csv.zst", "*.csv", "*.zip"]
+    files: list[_Path] = []
+    for pat in patterns:
+        files.extend(inp.rglob(pat))
+    seen = set()
+    uniq: list[_Path] = []
+    for f in sorted(files):
+        if f.resolve() not in seen:
+            seen.add(f.resolve())
+            uniq.append(f)
+
+    if not uniq:
+        return {"minute_zips": 0, "files_processed": 0, "symbol": symbol_root}
+
+    # Output root defaults to cwd/data/future
+    if output_root is None:
+        output_root = _Path.cwd() / "data" / "future"
+    out_root = _Path(output_root).resolve()
+    minute_root = out_root / market.lower() / "minute" / symbol_root.lower()
+
+    all_frames: list[pd.DataFrame] = []
+    files_processed = 0
+
+    import zipfile
+    import tempfile
+    import shutil
+
+    for f in uniq:
+        try:
+            if f.suffix.lower() == ".zip":
+                # Zip archive: extract .zst/.csv.zst members and read each
+                tmp = tempfile.mkdtemp(prefix="achest_zst_")
+                try:
+                    with zipfile.ZipFile(f) as z:
+                        z.extractall(tmp)
+                    for root, _, files_in in os.walk(tmp):
+                        for fn in files_in:
+                            fp = _Path(root) / fn
+                            if not (fn.lower().endswith(".zst") or fn.lower().endswith(".csv.zst") or fn.lower().endswith(".csv")):
+                                continue
+                            try:
+                                df = _read_local_zst_file(fp)
+                            except Exception:
+                                continue
+                            if df.empty:
+                                continue
+                            root_syms = df["symbol"].apply(lambda s: _parse_future_symbol(s)[0])
+                            df = df.loc[root_syms == symbol_root.upper()].copy()
+                            if df.empty:
+                                continue
+                            is_roll = df["symbol"].str.contains("-")
+                            if is_roll.any():
+                                df = df.loc[~is_roll].copy()
+                            if df.empty:
+                                continue
+                            all_frames.append(df)
+                            files_processed += 1
+                finally:
+                    shutil.rmtree(tmp, ignore_errors=True)
+            else:
+                try:
+                    df = _read_local_zst_file(f)
+                except Exception:
+                    continue
+                if df.empty:
+                    continue
+                root_syms = df["symbol"].apply(lambda s: _parse_future_symbol(s)[0])
+                df = df.loc[root_syms == symbol_root.upper()].copy()
+                if df.empty:
+                    continue
+                is_roll = df["symbol"].str.contains("-")
+                if is_roll.any():
+                    df = df.loc[~is_roll].copy()
+                if df.empty:
+                    continue
+                all_frames.append(df)
+                files_processed += 1
+        except Exception:
+            continue
+
+    if not all_frames:
+        return {"minute_zips": 0, "files_processed": files_processed, "symbol": symbol_root}
+
+    combined = pd.concat(all_frames, ignore_index=True).sort_values("ts_event").reset_index(drop=True)
+
+    # RTH filter (09:30-16:00 ET)
+    if rth:
+        t = combined["ts_event"].dt.time
+        mask = (t >= _time(9, 30)) & (t <= _time(16, 0))
+        combined = combined.loc[mask].reset_index(drop=True)
+
+    if combined.empty:
+        return {"minute_zips": 0, "files_processed": files_processed, "symbol": symbol_root}
+
+    combined["date"] = combined["ts_event"].dt.strftime("%Y%m%d")
+    combined["ms"] = combined["ts_event"].apply(_ms_since_midnight)
+    combined["root"] = combined["symbol"].apply(lambda s: _parse_future_symbol(s)[0].lower())
+
+    minute_root.mkdir(parents=True, exist_ok=True)
+    written = 0
+
+    for date_str, group in combined.groupby("date", sort=True):
+        group = group.sort_values("ts_event")
+        zip_name = f"{date_str}_trade.zip"
+        zip_path = minute_root / zip_name
+
+        csv_entries = []
+        for sym, sg in group.groupby("symbol", sort=True):
+            root, expiry = _parse_future_symbol(sym)
+            expiry_str = expiry if expiry else "000000"
+            csv_name = f"{date_str}_{root.lower()}_minute_trade_{expiry_str}.csv"
+            lines = []
+            for _, row in sg.iterrows():
+                lines.append(
+                    f"{int(row['ms'])},"
+                    f"{float(row['open']):.2f},"
+                    f"{float(row['high']):.2f},"
+                    f"{float(row['low']):.2f},"
+                    f"{float(row['close']):.2f},"
+                    f"{int(row['volume'])}"
+                )
+            csv_entries.append((csv_name, "\n".join(lines) + "\n"))
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as z:
+            for name, content in csv_entries:
+                z.writestr(name, content)
+        written += 1
+
+    return {
+        "minute_zips": written,
+        "files_processed": files_processed,
+        "symbol": symbol_root.upper(),
+        "market": market,
+        "output_dir": str(minute_root),
+        "date_range": f"{combined['ts_event'].min()} to {combined['ts_event'].max()}",
+    }
 
 
 def _is_valid_q_symbol(s: str) -> bool:

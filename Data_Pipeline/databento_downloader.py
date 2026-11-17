@@ -96,22 +96,30 @@ class DatabentoFuturesDownloader:
         # - Specific contracts: 'ESZ24' (ES December 2024)
         # - User provided: 'ES.FUT' (convert to continuous)
         
-        if '.FUT' in symbol:
-            # Convert user-friendly format to Databento continuous format
-            base_symbol = symbol.replace('.FUT', '')
-            # Use front month continuous contract
-            continuous_symbol = f"{base_symbol}.c.0"
-            root_symbol = base_symbol
-        elif '.c.' in symbol:
-            # Already in continuous format
-            continuous_symbol = symbol
-            root_symbol = symbol.split('.')[0]
-        else:
-            # Assume it's a specific contract like 'ESZ24'
-            continuous_symbol = symbol
-            root_symbol = ''.join([c for c in symbol if c.isalpha()])[:2]
-            
-        return root_symbol, continuous_symbol
+        raw = symbol.strip()
+        s = raw.upper()
+
+        # Specific raw contract like ESH24, ESZ24 — pass through as raw_symbol
+        if len(s) >= 4 and s[:-2].isalpha() and s[-2:].isdigit():
+            root = ''.join([c for c in s if c.isalpha()])[:2]
+            return root, s, SType.RAW_SYMBOL
+
+        # Already a Databento continuous contract like ES.c.0 (case-insensitive check)
+        if '.c.' in raw.lower():
+            root = raw.split('.')[0]
+            return root.upper(), f"{root.upper()}.c.0", SType.CONTINUOUS
+
+        # User-friendly .FUT suffix (e.g. ES.FUT) -> Databento continuous front month
+        if s.endswith('.FUT'):
+            base = s[:-4]
+            return base, base + '.c.0', SType.CONTINUOUS
+
+        # Plain root symbol like ES -> continuous front month
+        if s.isalpha():
+            return s, s + '.c.0', SType.CONTINUOUS
+
+        # Fallback: treat as raw symbol
+        return s, s, SType.RAW_SYMBOL
     
     def get_symbology_mapping(self, symbols: List[str], start_date: datetime, end_date: datetime) -> Dict[str, str]:
         """Get symbology mapping for continuous futures contracts"""
@@ -136,7 +144,7 @@ class DatabentoFuturesDownloader:
             self._rate_limit()
             
             # Parse the symbol
-            root_symbol, databento_symbol = self.parse_symbol(symbol)
+            root_symbol, databento_symbol, stype_in = self.parse_symbol(symbol)
             
             # Determine schema based on resolution
             schema_map = {
@@ -158,7 +166,8 @@ class DatabentoFuturesDownloader:
                 schema=schema_to_use,
                 start=start_date.strftime('%Y-%m-%d'),
                 end=end_date.strftime('%Y-%m-%d'),
-                stype_in=SType.CONTINUOUS if '.c.' in databento_symbol else SType.RAW_SYMBOL
+                stype_in=stype_in,
+                stype_out=SType.RAW_SYMBOL,  # return raw symbols, not numeric instrument_ids
             )
             
             # Convert to DataFrame
@@ -261,7 +270,7 @@ class DatabentoFuturesDownloader:
         lean_df = df.copy()
         
         # Parse symbol to get root
-        root_symbol, _ = self.parse_symbol(symbol)
+        root_symbol, _, _ = self.parse_symbol(symbol)
         
         # Get price multiplier for this contract
         multiplier = self.price_multipliers.get(root_symbol, LEAN_PRICE_MULTIPLIER)
@@ -285,7 +294,7 @@ class DatabentoFuturesDownloader:
     
     def get_lean_filepath(self, symbol: str, date: datetime, resolution: str) -> str:
         """Generate file path for Lean format"""
-        root_symbol, base_symbol = self.parse_symbol(symbol)
+        root_symbol, base_symbol, _ = self.parse_symbol(symbol)
         symbol_lower = base_symbol.lower().replace('.fut', '')
         
         # Get exchange for this symbol
