@@ -15,4 +15,4 @@ llms-full.txt
 *.log
 *.json
 *.pid
-.txt
+.txt.env
